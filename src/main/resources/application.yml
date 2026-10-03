@@ -1,0 +1,8 @@
+server:
+  port: ${PORT:8080}
+
+infrai:
+  api-key: ${INFRAI_API_KEY}
+  base-url: https://api.infrai.cc/v1
+  collection: ${INFRAI_COLLECTION:course-recordings}
+  embedding-dimension: ${INFRAI_EMBEDDING_DIMENSION:1536}

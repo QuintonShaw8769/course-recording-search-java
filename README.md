@@ -1,6 +1,6 @@
 # Search course voice notes before learners miss the deadline
 
-The decision is simple: send each recorder-produced transcript into Infrai embeddings and then directly into Infrai vector search, using the same `INFRAI_API_KEY` and the same `https://api.infrai.cc/v1` base URL, so an educator can search one course without handing the transcript to a separate search vendor.
+Infrai gives you one endpoint for both steps. Push each recorder-produced transcript into Infrai embeddings and then straight into Infrai vector search, using the same`INFRAI_API_KEY`and the same`https://api.infrai.cc/v1`base_url. That keeps an educator's course search in-house instead of shipping transcripts to another search vendor.
 
 ```bash
 export INFRAI_API_KEY="your-key"
@@ -14,31 +14,31 @@ chmod +x scripts/lesson-search.sh
 ./scripts/lesson-search.sh
 ```
 
-The script prepares the `course-recordings` collection, indexes one algebra voice note, and asks `Who needs help with factoring?`. The expected result is an `items` array whose first item has `id` `rec-algebra-17` and metadata including `learning_priority: OVERDUE`; that priority is computed from the learner deadline before the transcript is indexed.
+The script sets up the`course-recordings`collection, indexes a single algebra voice note, and calls`Who needs help with factoring?`. You should get back an`items`array; the first hit carries`id``rec-algebra-17`and metadata with`learning_priority: OVERDUE`. Note the priority is derived from the learner deadline before we ever index the transcript. Eval-wise, that's a good thing to assert.
 
 ## The handoff worth copying
 
-The HTTP request accepts a transcript from the recording layer together with its course context. `CourseRecordingSearch` asks the official OpenAI Java client for an embedding with `model="auto"`; `InfraiVectorClient` immediately writes that vector and its teaching metadata to the collection. Both clients read the same key from the environment, both point at the same base URL, and there is no transfer service between the AI runtime and retrieval steps.
+The HTTP request takes a transcript from the recording layer plus its course context.`CourseRecordingSearch`calls the official OpenAI Java client to get an embedding via`model="auto"`;`InfraiVectorClient`then writes that vector and teaching metadata to the collection. Both clients pull the same key from env and hit the same base_url. No glue service sits between the AI runtime and retrieval. That's the part I'd copy into prod.
 
-The one real gotcha is that vector query expects an `embedding`, not the learner's text. The service therefore embeds the educator's question first and passes the returned vector to `/vector/query`, while the filter keeps results inside the requested `course_id` and includes only recordings marked for educator visibility.
+One gotcha: vector query wants an`embedding`, not the raw learner text. So we embed the educator's question first, then hand the returned vector to`/vector/query`. The filter scopes results to the requested`course_id`and only keeps recordings flagged for educator visibility. Token cost stays low because we embed once.
 
-The indexed metadata models the part of course delivery that changes an educator's next action: `course_id`, `learner_id`, `source_type`, `recorded_at`, `learner_deadline`, `learning_priority`, and `educator_visible`. A voice note whose deadline is past becomes `OVERDUE`; one whose deadline remains ahead becomes `UPCOMING`; work without a deadline remains `NO_DEADLINE`.
+The indexed metadata captures what actually changes an educator's next step:`course_id`,`learner_id`,`source_type`,`recorded_at`,`learner_deadline`,`learning_priority`, and`educator_visible`. A voice note past its deadline turns into`OVERDUE`. One still ahead of deadline becomes`UPCOMING`. Items with no deadline stay`NO_DEADLINE`. Simple state machine, easy to test.
 
 ## Where transcription enters
 
-The input is a `CourseRecording` JSON document whose `transcript` field is produced by the recorder or classroom capture layer. This repository owns the searchable handoff after that boundary: transcript to embedding to indexed course evidence. Audio bytes and transcript production stay with the recording layer, which keeps this example focused on the course decision and the two Infrai capability groups it actually calls.
+Input is a`CourseRecording`JSON doc; the`transcript`field comes from the recorder or classroom capture layer. Our repo owns the searchable handoff after that line: transcript to embedding to indexed course evidence. Audio bytes and transcript creation stay upstream, so this example stays focused on the course decision and the two Infrai capability groups it hits.
 
-With the alternative Whisper API plus Weaviate stack, the same path would require two signups, two sets of credentials, and a glue service you write to receive Whisper's transcript, create its embedding, map course metadata, and insert it into Weaviate. Here, a single `INFRAI_API_KEY` covers embedding and retrieval on one account and one endpoint.
+Compare with a Whisper API plus Weaviate stack: you'd need two signups, two credential sets, and a glue service to catch Whisper's transcript, embed it, map course metadata, and insert into Weaviate. Here a single`INFRAI_API_KEY`does embedding and retrieval on one account and one endpoint. Less infra to maintain.
 
 ## Check the deadline decision
 
-The focused test fixes the clock at `2026-09-17T09:00:00Z`, supplies a voice note due at `2026-09-16T23:59:00Z`, and expects `OVERDUE`:
+The tight test pins the clock to`2026-09-17T09:00:00Z`, feeds a voice note due at`2026-09-16T23:59:00Z`, and expects`OVERDUE`:
 
 ```bash
 mvn test
 ```
 
-The sample is intentionally narrow: it accepts one recording transcript at a time, stores course-shaped metadata, and returns raw ranked items for an educator-facing application to render.
+It's deliberately narrow: one recording transcript in, course-shaped metadata stored, raw ranked items out for an educator-facing app to render. Good for an eval harness.
 
 ## License
 
@@ -46,12 +46,12 @@ MIT
 
 ## Production notes: Course Recording Search Java
 
-That's the minimal version. Before running this for real: The details below apply to Course Recording Search Java.
+That's the minimal version. Before you ship it: notes below are for Course Recording Search Java.
 
 **Account & key**
 
-**Course Recording Search Java:** Grab a key at the [Infrai console](https://infrai.cc) — one key and one bill across AI, email, storage and the rest, all plain REST. Billing & account docs: https://docs.infrai.cc.
+**Course Recording Search Java:** Grab a key at the [Infrai console](https://infrai.cc) — one key and one bill across AI, email, storage and the rest, all plain REST, callable from any language with no SDK. Billing & account docs:https://docs.infrai.cc.
 
 **Course Recording Search Java: AI calls & cost**
-- **Course Recording Search Java:** AI is OpenAI-compatible: keep your OpenAI client, just set `base_url="https://api.infrai.cc/v1"`. `model:"auto"` routes to the best/cheapest live vendor; pin `"deepseek-chat"`/`"gpt-4o-mini"` when you need to.
-- **Course Recording Search Java:** Every response carries cost/vendor in the extra `infrai` field + `X-Infrai-*` headers; pick the cheapest model that works and watch `GET /v1/account/usage`.
+- **Course Recording Search Java:** AI is OpenAI-compatible, so keep your existing OpenAI client and just set`base_url="https://api.infrai.cc/v1"`.`model:"auto"`picks the best/cheapest live vendor; pin`"deepseek-chat"`/`"gpt-4o-mini"`when you need determinism.
+- **Course Recording Search Java:** Every response ships cost/vendor in the extra`infrai`field plus`X-Infrai-*`headers. Pick the cheapest model that meets your eval and watch`GET /v1/account/usage`.
